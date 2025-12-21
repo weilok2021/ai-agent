@@ -1,0 +1,1 @@
+MAX_CHARS = 10000 # read file content limit
