@@ -1,4 +1,5 @@
 import os
+from google.genai import types
 
 def write_file(working_directory, file_path, content):
     try:
@@ -20,3 +21,25 @@ def write_file(working_directory, file_path, content):
             return f'Successfully wrote to "{file_path}" ({len(content)} characters written)'
     except Exception as e:
         return f"Error: {e}"
+    
+
+# We'll use this to build a "declaration" or "schema" for each of our functions. Again,
+# this basically just tells the LLM how the function should be called. 
+schema_write_file = types.FunctionDeclaration(
+    name="write_file",
+    description="Write content into a file with file path relative to the working directory",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "file_path": types.Schema(
+                type=types.Type.STRING,
+                description="file path to get content from, relative to the working directory",
+            ),
+            "content": types.Schema(
+                type=types.Type.STRING,
+                description="content to be written into file with argument file_path",
+            )
+        },
+        required=["file_path", "content"],
+    ),
+)
