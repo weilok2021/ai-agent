@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 import argparse # to handle cli arguments
 from google.genai import types
 from google import genai
+from prompts.prompts import system_prompt 
+from functions.available_functions import available_functions
 
 
 def main():
@@ -24,8 +26,12 @@ def main():
 
     # args.user_prompt is the argument entered in cli
     response = client.models.generate_content(
-        model='gemini-2.5-flash', contents=messages 
-    )
+        model = 'gemini-2.5-flash', 
+        contents = messages,
+        config = types.GenerateContentConfig(
+            tools = [available_functions], system_instruction=system_prompt
+        )    
+)
     
     if response.usage_metadata is None:
         raise RuntimeError("Can't access token limit. Some error occur when accessing usage_metadata")
@@ -36,8 +42,14 @@ def main():
         print(f"User prompt: {args.user_prompt}")
         print(f"Prompt tokens: {usage.prompt_token_count}")
         print(f"Response tokens: {usage.candidates_token_count}")
-    print("Response:")
-    print(response.text)
+    
+    if response.function_calls is None:
+        print("Response:")
+        print(response.text)
+    else:
+        for func_obj in response.function_calls:
+            print(f"Calling function: {func_obj.name}({func_obj.args})")
+
 
 if __name__ == "__main__":
     main()
