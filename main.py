@@ -1,74 +1,85 @@
+import argparse
 import os
+
+from config import MAX_LOOP
 from dotenv import load_dotenv
-import argparse # to handle cli arguments
-from google.genai import types
 from google import genai
-from prompts.prompts import system_prompt 
+from google.genai import types
+
 from functions.available_functions import available_functions, call_function
+from prompts.prompts import system_prompt
 
 
 def main():
-    load_dotenv()
-    api_key = os.environ.get("GEMINI_API_KEY") # get api key from .env
-    
-    if api_key is None:
-        raise RuntimeError("API key is not found!")
-    
-    client = genai.Client(api_key=api_key)
-     
-    parser = argparse.ArgumentParser(description="Chatbot")
-    parser.add_argument("user_prompt", type=str, help="User prompt")
+    parser = argparse.ArgumentParser(description="AI Code Assistant")
+    parser.add_argument("user_prompt", type=str, help="Prompt to send to Gemini")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     args = parser.parse_args()
-    
-    # store list of messages, this would be the context window for now.    
+
+    load_dotenv()
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+
+    client = genai.Client(api_key=api_key)
     messages = [types.Content(role="user", parts=[types.Part(text=args.user_prompt)])]
-
-    # args.user_prompt is the argument entered in cli
-    response = client.models.generate_content(
-        model = 'gemini-2.5-flash', 
-        contents = messages,
-        config = types.GenerateContentConfig(
-            tools = [available_functions], system_instruction=system_prompt
-        )    
-)
-    
-    if response.usage_metadata is None:
-        raise RuntimeError("Can't access token limit. Some error occur when accessing usage_metadata")
-    usage = response.usage_metadata
-    
-    # if user include --verbose flag in cli
     if args.verbose:
-        print(f"User prompt: {args.user_prompt}")
-        print(f"Prompt tokens: {usage.prompt_token_count}")
-        print(f"Response tokens: {usage.candidates_token_count}")
-    
-    if response.function_calls:
-        # for function_call in response.function_calls:
-        #     print(f"Calling function: {function_call.name}({function_call.args})")
+        print(f"User prompt: {args.user_prompt}\n")
 
-        function_results = []  # ← create this before the loop
-
-        for function_call in response.function_calls:
-            function_call_result = call_function(function_call, args.verbose)
-
-            # Validation checks
-            if not function_call_result.parts:
-                raise Exception("types.Content object returned from call_function does not have a .parts list!")
-            if function_call_result.parts[0].function_response is None:
-                raise Exception("There should be a FunctionResponse object!")
-            if function_call_result.parts[0].function_response.response is None:
-                raise Exception("There is no actual function result returned!")
-
-            # ✅ Now add it to a list of function results
-            function_results.append(function_call_result.parts[0])
-
-            if args.verbose:
-                print(f"-> {function_call_result.parts[0].function_response.response}")
+    for i in range(MAX_LOOP):
+        try:
+            finished = generate_content(client, messages, args.verbose)
+            if finished:
+                break
+        except Exception as e:
+            print(f"Gemini generating content failed: {e}")
     else:
-        print(f"response: {response.text}")
-        return f"The response.function_calls is None!"
+        # Optional: handle case where max iterations reached
+        print("Reached maximum number of iterations without completion.")
+
+
+def generate_content(client, messages, verbose):
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=messages,
+        config=types.GenerateContentConfig(
+            tools=[available_functions], system_instruction=system_prompt
+        ),
+    )
     
+    if response.candidates:
+        for candidate in response.candidates:
+            messages.append(candidate.content)
+    
+    if not response.usage_metadata:
+        raise RuntimeError("Gemini API response appears to be malformed")
+
+    if verbose:
+        print("Prompt tokens:", response.usage_metadata.prompt_token_count)
+        print("Response tokens:", response.usage_metadata.candidates_token_count)
+
+    if not response.function_calls and response.text:
+        print("Response:")
+        print(response.text)
+        return True   
+
+    function_responses = []
+    for function_call in response.function_calls:
+        result = call_function(function_call, verbose)
+        if (
+            not result.parts
+            or not result.parts[0].function_response
+            or not result.parts[0].function_response.response
+        ):
+            raise RuntimeError(f"Empty function response for {function_call.name}")
+        if verbose:
+            print(f"-> {result.parts[0].function_response.response}")
+        function_responses.append(result.parts[0])
+
+    for function_response in function_responses:
+        messages.append(types.Content(role="user", parts=[function_response]))
+    
+    return False      # model still working
 
 if __name__ == "__main__":
     main()
